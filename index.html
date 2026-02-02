@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chat App Pro - ES2025</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
@@ -10,101 +10,83 @@
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .fade-in { animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .scale-in { animation: scaleIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes scaleIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        
+        .toast-enter { transform: translateY(-20px); opacity: 0; }
+        .toast-enter-active { transform: translateY(0); opacity: 1; transition: all 0.3s ease; }
+        .toast-exit { opacity: 1; }
+        .toast-exit-active { opacity: 0; transform: translateY(-20px); transition: all 0.3s ease; }
     </style>
 </head>
-<body class="bg-gray-100 h-screen font-sans overflow-hidden">
+<body class="bg-gray-100 h-[100dvh] font-sans overflow-hidden flex items-center justify-center">
+
+    <div id="toastContainer" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[200] space-y-2 w-[90%] max-w-sm pointer-events-none"></div>
+
+    <div id="confirmModal" class="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4 fade-in">
+        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-in text-center">
+            <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl"><i class="fas fa-exclamation-triangle"></i></div>
+            <h3 id="confirmTitle" class="font-bold text-lg text-gray-800">Konfirmasi</h3>
+            <p id="confirmMessage" class="text-sm text-gray-500 mt-2 mb-6">Apakah Anda yakin?</p>
+            <div class="flex gap-3">
+                <button id="btnCancelConfirm" class="flex-1 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-sm transition">Batal</button>
+                <button id="btnOkConfirm" class="flex-1 py-2.5 text-white bg-red-600 hover:bg-red-700 rounded-xl font-bold text-sm shadow transition">Ya, Lanjutkan</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="imageViewer" class="fixed inset-0 z-[180] bg-black/95 hidden flex flex-col items-center justify-center p-4 fade-in">
+        <button id="closeImageViewer" class="absolute top-4 right-4 text-white/70 hover:text-white p-2 rounded-full bg-white/10 hover:bg-white/20 transition z-50">
+            <i class="fas fa-times text-xl"></i>
+        </button>
+
+        <div class="relative w-full h-full flex items-center justify-center overflow-hidden pb-16">
+            <img id="viewerImage" src="" class="hidden max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain scale-in">
+            <video id="viewerVideo" src="" controls class="hidden max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain scale-in"></video>
+        </div>
+
+        <div class="absolute bottom-6 flex flex-col items-center gap-2">
+            
+            <div id="downloadOptions" class="hidden flex-col bg-white rounded-xl shadow-xl overflow-hidden mb-2 w-40 animate-fade-in bottom-full mb-2">
+                <button id="btnDlJpg" class="px-4 py-3 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 text-left border-b w-full">
+                    <i class="fas fa-file-image mr-2"></i> Download JPG
+                </button>
+                <button id="btnDlPng" class="px-4 py-3 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 text-left w-full">
+                    <i class="fas fa-file-image mr-2"></i> Download PNG
+                </button>
+            </div>
+
+            <button id="viewerMainDownloadBtn" class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-bold shadow-lg transition flex items-center gap-2">
+                <i class="fas fa-download"></i> <span id="dlBtnText">Download</span>
+            </button>
+        </div>
+    </div>
 
     <div id="authOverlay" class="fixed inset-0 z-[100] bg-white flex items-center justify-center p-4">
         <div class="w-full max-w-md p-8 space-y-6 text-center animate-fade-in shadow-2xl rounded-2xl border border-gray-100">
             <h2 class="text-4xl font-extrabold text-gray-800">ES2025<span class="text-indigo-600">.</span></h2>
             <p class="text-gray-500" id="authTitle">Login untuk Masuk</p>
-            <div id="authError" class="hidden bg-red-50 text-red-600 p-3 rounded-lg text-xs"></div>
-            
-            <div id="usernameField" class="hidden text-left">
-                <label class="text-xs font-bold text-gray-600 ml-1">Username</label>
-                <input type="text" id="usernameInput" class="w-full px-5 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none mt-1" placeholder="Contoh: BossBesar123">
-            </div>
-
+            <div id="usernameField" class="hidden text-left"><label class="text-xs font-bold text-gray-600 ml-1">Username</label><input type="text" id="usernameInput" class="w-full px-5 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none mt-1" placeholder="Contoh: BossBesar123"></div>
             <input type="email" id="emailInput" class="w-full px-5 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Email Address">
             <input type="password" id="passInput" class="w-full px-5 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Password">
-            
             <button id="authBtn" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-indigo-700 transition">Masuk</button>
-            <p class="text-xs text-gray-400 cursor-pointer hover:text-indigo-600 select-none" id="toggleAuthBtn">
-                Belum punya akun? <span class="font-bold">Daftar Sekarang</span>
-            </p>
+            <p class="text-xs text-gray-400 cursor-pointer hover:text-indigo-600 select-none" id="toggleAuthBtn">Belum punya akun? <span class="font-bold">Daftar Sekarang</span></p>
         </div>
     </div>
 
-    <div id="appContainer" class="hidden h-full w-full max-w-7xl mx-auto bg-white shadow-2xl md:my-5 md:rounded-2xl md:h-[90vh] overflow-hidden flex border border-gray-200 relative">
-        
-        <aside id="roomListPanel" class="w-full md:w-1/3 bg-white border-r border-gray-200 flex flex-col h-full absolute md:relative z-20 transition-transform duration-300">
-            <div class="p-5 border-b flex justify-between items-center bg-gray-50">
-                <div>
-                    <h2 id="sidebarTitle" class="font-bold text-xl text-gray-800">Guest</h2>
-                    <p id="sidebarEmail" class="text-xs text-gray-500 truncate w-40">user@email.com</p>
-                </div>
-                <button id="logoutBtn" class="text-gray-400 hover:text-red-500 p-2" title="Keluar"><i class="fas fa-power-off"></i></button>
-            </div>
-
-            <div class="p-4 grid grid-cols-2 gap-3 bg-white">
-                <button id="btnOpenCreate" class="py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 shadow transition"><i class="fas fa-plus mr-1"></i> Buat</button>
-                <button id="btnOpenJoin" class="py-2.5 bg-white border border-indigo-600 text-indigo-600 rounded-lg text-sm font-bold hover:bg-indigo-50 transition"><i class="fas fa-sign-in-alt mr-1"></i> Gabung</button>
-            </div>
-
+    <div id="appContainer" class="hidden w-[98%] h-[98%] bg-white shadow-2xl rounded-2xl overflow-hidden flex border border-gray-200 relative">
+        <aside id="roomListPanel" class="w-full md:w-1/4 bg-white border-r border-gray-200 flex flex-col h-full absolute md:relative z-20 transition-transform duration-300">
+            <div class="p-5 border-b flex justify-between items-center bg-gray-50"><div class="overflow-hidden"><h2 id="sidebarTitle" class="font-bold text-lg text-gray-800 truncate">Guest</h2><p id="sidebarEmail" class="text-xs text-gray-500 truncate w-40">user@email.com</p></div><button id="logoutBtn" class="text-gray-400 hover:text-red-500 p-2"><i class="fas fa-power-off"></i></button></div>
+            <div class="p-3 grid grid-cols-2 gap-2 bg-white border-b"><button id="btnOpenCreate" class="py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow transition"><i class="fas fa-plus mr-1"></i> Buat</button><button id="btnOpenJoin" class="py-2 bg-white border border-indigo-600 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-50 transition"><i class="fas fa-sign-in-alt mr-1"></i> Gabung</button></div>
             <div id="roomsContainer" class="flex-1 overflow-y-auto p-2 space-y-1 bg-gray-50"></div>
         </aside>
 
-        <main id="chatPanel" class="w-full md:w-2/3 bg-white flex flex-col h-full absolute md:relative z-10 translate-x-full md:translate-x-0 transition-transform duration-300">
-            
-            <div id="emptyChatState" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white text-center p-10">
-                <div class="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6 text-indigo-200 text-5xl"><i class="fas fa-comments"></i></div>
-                <h3 class="text-gray-800 font-bold text-xl">Selamat Datang!</h3>
-                <p class="text-gray-400 mt-2">Pilih grup di kiri untuk mulai chat.</p>
-            </div>
-
-            <header id="chatHeader" class="bg-white p-3 px-4 border-b flex items-center justify-between shadow-sm z-40 hidden">
-                <div class="flex items-center gap-3">
-                    <button id="backToDashboard" class="md:hidden text-indigo-600 p-2 -ml-2"><i class="fas fa-arrow-left"></i></button>
-                    <div>
-                        <h2 id="activeRoomName" class="font-bold text-gray-800 text-lg leading-tight">Nama Ruang</h2>
-                        <span id="activeRoomCode" class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono border">CODE</span>
-                    </div>
-                </div>
-                <div class="relative">
-                    <button id="groupMenuBtn" class="text-gray-500 hover:bg-gray-100 w-10 h-10 rounded-full transition"><i class="fas fa-ellipsis-v"></i></button>
-                    <div id="groupMenuDropdown" class="hidden absolute right-0 top-12 bg-white shadow-xl rounded-xl border w-48 py-2 z-50 animate-fade-in">
-                        <button id="viewMembersBtn" class="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm text-gray-700"><i class="fas fa-users mr-2 text-indigo-500"></i> Anggota Grup</button>
-                        <div class="border-t my-1"></div>
-                        <button id="leaveGroupBtn" class="w-full text-left px-4 py-3 hover:bg-red-50 text-sm text-red-600"><i class="fas fa-sign-out-alt mr-2"></i> Keluar Grup</button>
-                    </div>
-                </div>
-            </header>
-
-            <div id="chatBox" class="flex-1 overflow-y-auto p-4 space-y-4 hidden bg-white"></div>
-
-            <footer id="chatInputArea" class="bg-[#f0f2f5] p-3 hidden border-t">
-                <div id="previewContainer" class="hidden mb-2 px-4 py-2 bg-white rounded-lg border flex items-center justify-between mx-2 shadow-sm">
-                    <div class="flex items-center gap-3">
-                        <span id="previewIcon" class="text-indigo-500 text-lg"></span>
-                        <span id="previewName" class="text-xs text-gray-600 truncate max-w-[200px]">file.jpg</span>
-                    </div>
-                    <button id="cancelFileBtn" class="text-red-500 hover:bg-red-50 p-1 rounded"><i class="fas fa-times"></i></button>
-                </div>
-
-                <div class="flex items-end gap-2 max-w-4xl mx-auto">
-                    <label class="p-3 text-gray-500 hover:text-indigo-600 cursor-pointer transition bg-white rounded-full shadow-sm hover:shadow-md h-12 w-12 flex items-center justify-center">
-                        <i class="fas fa-paperclip text-lg"></i>
-                        <input type="file" id="fileInput" class="hidden" accept="image/*,video/*">
-                    </label>
-                    <div class="flex-1 bg-white rounded-2xl flex items-center border border-gray-300 focus-within:ring-2 focus-within:ring-indigo-500 transition px-2">
-                        <textarea id="msgInput" rows="1" class="w-full bg-transparent border-none focus:ring-0 outline-none resize-none px-2 py-3 max-h-32 text-sm" placeholder="Ketik pesan..."></textarea>
-                    </div>
-                    <button id="sendBtn" class="bg-indigo-600 text-white w-12 h-12 rounded-full hover:bg-indigo-700 shadow-md flex items-center justify-center transition transform active:scale-95">
-                        <i class="fas fa-paper-plane"></i>
-                    </button>
-                </div>
-            </footer>
+        <main id="chatPanel" class="w-full md:w-3/4 bg-white flex flex-col h-full absolute md:relative z-10 translate-x-full md:translate-x-0 transition-transform duration-300">
+            <div id="emptyChatState" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white text-center p-10"><div class="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-4 text-indigo-200 text-4xl"><i class="fas fa-comments"></i></div><h3 class="text-gray-800 font-bold text-lg">Selamat Datang!</h3><p class="text-gray-400 mt-2 text-sm">Pilih grup di kiri untuk mulai chat.</p></div>
+            <header id="chatHeader" class="bg-white p-3 px-4 border-b flex items-center justify-between shadow-sm z-40 hidden"><div class="flex items-center gap-3 overflow-hidden"><button id="backToDashboard" class="md:hidden text-indigo-600 p-2 -ml-2"><i class="fas fa-arrow-left"></i></button><div class="overflow-hidden"><h2 id="activeRoomName" class="font-bold text-gray-800 text-lg leading-tight truncate">Nama Ruang</h2><span id="activeRoomCode" class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-mono border">CODE</span></div></div><div class="relative flex-shrink-0"><button id="groupMenuBtn" class="text-gray-500 hover:bg-gray-100 w-10 h-10 rounded-full transition"><i class="fas fa-ellipsis-v"></i></button><div id="groupMenuDropdown" class="hidden absolute right-0 top-12 bg-white shadow-xl rounded-xl border w-48 py-2 z-50 animate-fade-in"><button id="viewMembersBtn" class="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm text-gray-700"><i class="fas fa-users mr-2 text-indigo-500"></i> Anggota Grup</button><div class="border-t my-1"></div><button id="leaveGroupBtn" class="w-full text-left px-4 py-3 hover:bg-red-50 text-sm text-red-600"><i class="fas fa-sign-out-alt mr-2"></i> Keluar Grup</button></div></div></header>
+            <div id="chatBox" class="flex-1 overflow-y-auto p-4 space-y-4 hidden bg-white pb-20 md:pb-4"></div>
+            <footer id="chatInputArea" class="bg-[#f0f2f5] p-2 md:p-3 hidden border-t absolute bottom-0 w-full md:relative"><div id="previewContainer" class="hidden mb-2 px-4 py-2 bg-white rounded-lg border flex items-center justify-between mx-2 shadow-sm"><div class="flex items-center gap-3 overflow-hidden"><span id="previewIcon" class="text-indigo-500 text-lg"></span><span id="previewName" class="text-xs text-gray-600 truncate max-w-[150px]">file.jpg</span></div><button id="cancelFileBtn" class="text-red-500 hover:bg-red-50 p-1 rounded"><i class="fas fa-times"></i></button></div><div class="flex items-end gap-2 max-w-5xl mx-auto"><label class="p-2 text-gray-500 hover:text-indigo-600 cursor-pointer transition bg-white rounded-full shadow-sm hover:shadow-md h-10 w-10 md:h-12 md:w-12 flex items-center justify-center"><i class="fas fa-paperclip text-lg"></i><input type="file" id="fileInput" class="hidden" accept="image/*,video/*"></label><div class="flex-1 bg-white rounded-2xl flex items-center border border-gray-300 focus-within:ring-2 focus-within:ring-indigo-500 transition px-2"><textarea id="msgInput" rows="1" class="w-full bg-transparent border-none focus:ring-0 outline-none resize-none px-2 py-3 max-h-24 text-sm" placeholder="Ketik pesan..."></textarea></div><button id="sendBtn" class="bg-indigo-600 text-white w-10 h-10 md:h-12 md:w-12 rounded-full hover:bg-indigo-700 shadow-md flex items-center justify-center transition transform active:scale-95 flex-shrink-0"><i class="fas fa-paper-plane"></i></button></div></footer>
         </main>
     </div>
 
