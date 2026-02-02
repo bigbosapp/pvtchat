@@ -26,6 +26,7 @@ let currentUser = null;
 let currentRoomId = null;
 let currentRoomData = null;
 let unsubscribeMsg = null; 
+let confirmCallback = null; 
 
 // --- DOM ELEMENTS ---
 const dom = {
@@ -49,7 +50,119 @@ const dom = {
     viewMembersBtn: document.getElementById('viewMembersBtn'),
     modalMembers: document.getElementById('modalMembers'),
     sidebarTitle: document.getElementById('sidebarTitle'),
-    sidebarEmail: document.getElementById('sidebarEmail') // Element baru untuk email
+    sidebarEmail: document.getElementById('sidebarEmail'),
+    
+    // NEW SYSTEM COMPONENTS
+    toastContainer: document.getElementById('toastContainer'),
+    confirmModal: document.getElementById('confirmModal'),
+    imageViewer: document.getElementById('imageViewer'),
+    viewerImage: document.getElementById('viewerImage'),
+    viewerVideo: document.getElementById('viewerVideo'),
+    viewerMainDownloadBtn: document.getElementById('viewerMainDownloadBtn'),
+    downloadOptions: document.getElementById('downloadOptions'),
+    dlBtnText: document.getElementById('dlBtnText'),
+    btnDlJpg: document.getElementById('btnDlJpg'),
+    btnDlPng: document.getElementById('btnDlPng')
+};
+
+// --- HELPER FUNCTIONS: MODERN UI ---
+
+window.showToast = (msg, type = 'success') => {
+    const toast = document.createElement('div');
+    const bgColor = type === 'error' ? 'bg-red-500' : 'bg-gray-800';
+    const icon = type === 'error' ? '<i class="fas fa-exclamation-circle"></i>' : '<i class="fas fa-check-circle"></i>';
+    toast.className = `${bgColor} text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 text-sm font-bold pointer-events-auto toast-enter`;
+    toast.innerHTML = `${icon} <span>${msg}</span>`;
+    dom.toastContainer.appendChild(toast);
+    setTimeout(() => { toast.classList.remove('toast-enter'); toast.classList.add('toast-enter-active'); }, 10);
+    setTimeout(() => { toast.classList.remove('toast-enter-active'); toast.classList.add('toast-exit-active'); setTimeout(() => toast.remove(), 300); }, 3000);
+};
+
+window.showCustomConfirm = (title, msg, callback) => {
+    document.getElementById('confirmTitle').innerText = title;
+    document.getElementById('confirmMessage').innerText = msg;
+    dom.confirmModal.classList.remove('hidden');
+    confirmCallback = callback;
+};
+
+document.getElementById('btnCancelConfirm').onclick = () => dom.confirmModal.classList.add('hidden');
+document.getElementById('btnOkConfirm').onclick = () => { if(confirmCallback) confirmCallback(); dom.confirmModal.classList.add('hidden'); };
+
+// --- ADVANCED IMAGE/VIDEO VIEWER ---
+window.viewImage = (url, type) => {
+    dom.imageViewer.classList.remove('hidden');
+    dom.downloadOptions.classList.add('hidden'); // Reset dropdown
+
+    if (type === 'video') {
+        // Mode Video
+        dom.viewerImage.classList.add('hidden');
+        dom.viewerVideo.classList.remove('hidden');
+        dom.viewerVideo.src = url;
+        dom.dlBtnText.innerText = "Download Video";
+        
+        // Direct Download untuk Video
+        dom.viewerMainDownloadBtn.onclick = () => {
+            const dlUrl = url.replace('/upload/', '/upload/fl_attachment/');
+            window.downloadFile(dlUrl, `video_${Date.now()}.mp4`);
+        };
+    } else {
+        // Mode Gambar
+        dom.viewerVideo.classList.add('hidden');
+        dom.viewerImage.classList.remove('hidden');
+        dom.viewerImage.src = url;
+        dom.dlBtnText.innerText = "Download Options";
+
+        // Toggle Dropdown
+        dom.viewerMainDownloadBtn.onclick = (e) => {
+            e.stopPropagation();
+            dom.downloadOptions.classList.toggle('hidden');
+        };
+
+        // Logic Download JPG/PNG
+        dom.btnDlJpg.onclick = () => {
+            const dlUrl = url.replace('/upload/', '/upload/f_jpg,fl_attachment/');
+            window.downloadFile(dlUrl, `image_${Date.now()}.jpg`);
+            dom.downloadOptions.classList.add('hidden');
+        };
+        dom.btnDlPng.onclick = () => {
+            const dlUrl = url.replace('/upload/', '/upload/f_png,fl_attachment/');
+            window.downloadFile(dlUrl, `image_${Date.now()}.png`);
+            dom.downloadOptions.classList.add('hidden');
+        };
+    }
+};
+
+// Tutup dropdown jika klik di luar
+document.addEventListener('click', (e) => {
+    if (!dom.downloadOptions.contains(e.target) && !dom.viewerMainDownloadBtn.contains(e.target)) {
+        dom.downloadOptions.classList.add('hidden');
+    }
+});
+
+document.getElementById('closeImageViewer').onclick = () => {
+    dom.imageViewer.classList.add('hidden');
+    dom.viewerVideo.pause(); // Stop video jika ada
+    dom.viewerVideo.src = "";
+};
+
+// Seamless Download
+window.downloadFile = async (url, filename) => {
+    showToast("Mengunduh...", "success");
+    try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+        // Fallback jika fetch gagal (CORS)
+        window.open(url, '_blank');
+    }
 };
 
 // --- AUTH SYSTEM ---
@@ -58,12 +171,9 @@ onAuthStateChanged(auth, (user) => {
         currentUser = user;
         dom.authOverlay.classList.add('hidden');
         dom.appContainer.classList.remove('hidden');
-        
-        // UPDATE SIDEBAR: USERNAME & EMAIL
         const displayName = user.displayName || user.email.split('@')[0];
         dom.sidebarTitle.innerText = displayName; 
-        dom.sidebarEmail.innerText = user.email; // Ganti tulisan "Online" dengan Email
-        
+        dom.sidebarEmail.innerText = user.email; 
         loadRooms(); 
     } else {
         dom.authOverlay.classList.remove('hidden');
@@ -71,7 +181,6 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// AUTH ACTIONS
 document.getElementById('toggleAuthBtn').onclick = function() {
     const isLogin = document.getElementById('authBtn').innerText.includes("Masuk");
     if (isLogin) {
@@ -103,8 +212,7 @@ document.getElementById('authBtn').onclick = async () => {
             await signInWithEmailAndPassword(auth, email, pass);
         }
     } catch (e) {
-        document.getElementById('authError').innerText = e.message;
-        document.getElementById('authError').classList.remove('hidden');
+        showToast(e.message, 'error'); 
     }
 };
 document.getElementById('logoutBtn').onclick = () => signOut(auth);
@@ -130,23 +238,23 @@ document.getElementById('confirmCreateRoom').onclick = async () => {
         });
         toggleModal('modalCreate', false); toggleModal('modalSuccess', true);
         document.getElementById('generatedCodeDisplay').innerText = code;
-    } catch (e) { alert(e.message); }
+    } catch (e) { showToast(e.message, 'error'); }
 };
 
 document.getElementById('confirmJoinRoom').onclick = async () => {
     const code = document.getElementById('joinRoomCode').value.toUpperCase();
     const q = query(collection(db, "rooms"), where("code", "==", code));
     const snap = await getDocs(q);
-    if(snap.empty) return alert("Kode salah!");
+    if(snap.empty) return showToast("Kode salah!", 'error');
     const roomDoc = snap.docs[0];
     const roomData = roomDoc.data();
-    if(roomData.memberIds && roomData.memberIds.includes(currentUser.uid)) return alert("Sudah bergabung.");
+    if(roomData.memberIds && roomData.memberIds.includes(currentUser.uid)) return showToast("Sudah bergabung.", 'error');
 
     try {
         const myProfile = { uid: currentUser.uid, email: currentUser.email, username: currentUser.displayName || currentUser.email };
         await updateDoc(roomDoc.ref, { members: arrayUnion(myProfile), memberIds: arrayUnion(currentUser.uid) });
-        toggleModal('modalJoin', false); alert("Berhasil bergabung!");
-    } catch (e) { alert(e.message); }
+        toggleModal('modalJoin', false); showToast("Berhasil bergabung!", 'success');
+    } catch (e) { showToast(e.message, 'error'); }
 };
 
 // --- LOAD ROOMS ---
@@ -180,13 +288,11 @@ function openChatRoom(roomId, roomData) {
         dom.chatPanel.classList.remove('translate-x-full');
         dom.chatPanel.classList.remove('absolute');
     }
-
     dom.emptyChatState.classList.add('hidden'); 
     dom.chatHeader.classList.remove('hidden');
     dom.chatBox.classList.remove('hidden');
     dom.chatInputArea.classList.remove('hidden');
     dom.groupMenuDropdown.classList.add('hidden'); 
-
     loadMessages(roomId);
 }
 
@@ -197,7 +303,7 @@ document.getElementById('backToDashboard').onclick = () => {
     dom.emptyChatState.classList.remove('hidden');
 };
 
-// --- MESSAGES LOGIC (TAMPILAN BARU) ---
+// --- MESSAGES LOGIC ---
 function loadMessages(roomId) {
     if (unsubscribeMsg) unsubscribeMsg();
     const q = query(collection(db, "messages"), where("roomId", "==", roomId), orderBy("timestamp", "asc"));
@@ -213,27 +319,25 @@ function loadMessages(roomId) {
     });
 }
 
-window.deleteMessage = async (msgId) => {
-    if(!confirm("Hapus pesan ini?")) return;
-    try {
-        const msgRef = doc(db, "messages", msgId);
-        await updateDoc(msgRef, { isDeleted: true, text: "", fileUrl: null });
-    } catch (e) { alert(e.message); }
+window.deleteMessage = (msgId) => {
+    showCustomConfirm("Hapus Pesan", "Pesan akan dihapus untuk semua orang. Lanjutkan?", async () => {
+        try {
+            const msgRef = doc(db, "messages", msgId);
+            await updateDoc(msgRef, { isDeleted: true, text: "", fileUrl: null });
+            showToast("Pesan dihapus", 'success');
+        } catch (e) { showToast(e.message, 'error'); }
+    });
 };
 
 function renderMessage(msg) {
     const isMe = msg.uid === currentUser.uid;
     const senderName = msg.username || msg.email.split('@')[0];
     const div = document.createElement('div');
-    
-    // Layout dasar
     div.className = `flex w-full mb-4 ${isMe ? 'justify-end' : 'justify-start'} animate-fade-in group`;
 
-    // 1. Tombol Hapus (Sampah) - Sekarang di Kanan Atas Bubble
     const deleteBtn = (isMe && !msg.isDeleted) ? 
         `<button onclick="deleteMessage('${msg.id}')" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition ml-2" title="Hapus"><i class="fas fa-trash-alt"></i></button>` : '';
 
-    // 2. Header Bubble (Nama & Hapus)
     const bubbleHeader = `
         <div class="flex justify-between items-start mb-1 gap-4 border-b border-black/5 pb-1">
             <span class="text-[10px] font-bold ${isMe ? 'text-indigo-800' : 'text-orange-600'}">${senderName}</span>
@@ -241,30 +345,25 @@ function renderMessage(msg) {
         </div>
     `;
     
-    // 3. Konten Pesan
     let contentHtml = '';
     if (msg.isDeleted) {
         contentHtml = `<div class="flex items-center gap-2 text-gray-400 italic text-sm py-1"><i class="fas fa-ban text-xs"></i> <span>Pesan dihapus</span></div>`;
     } else {
         let mediaContent = '';
         if(msg.fileUrl) {
-            const downloadUrl = msg.fileUrl.replace('/upload/', '/upload/fl_attachment/');
-            const downloadMenu = `
-                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition z-10">
-                    <button class="bg-black/50 text-white w-6 h-6 rounded-full text-xs hover:bg-black" onclick="toggleDownloadMenu(this)"><i class="fas fa-ellipsis-h"></i></button>
-                    <div class="hidden absolute right-0 mt-1 w-32 bg-white shadow-lg rounded-lg py-1 text-xs text-gray-700 z-20 border">
-                        <p class="px-2 py-1 bg-gray-50 font-bold text-[10px] text-gray-400 uppercase">Download</p>
-                        ${msg.type === 'image' ? `
-                            <a href="${msg.fileUrl.replace('/upload/', '/upload/f_jpg,fl_attachment/')}" target="_blank" class="block px-3 py-2 hover:bg-gray-100">as JPG</a>
-                            <a href="${msg.fileUrl.replace('/upload/', '/upload/f_png,fl_attachment/')}" target="_blank" class="block px-3 py-2 hover:bg-gray-100">as PNG</a>
-                        ` : `
-                             <a href="${downloadUrl}" target="_blank" class="block px-3 py-2 hover:bg-gray-100">Video File</a>
-                        `}
-                    </div>
-                </div>
-            `;
-            const tag = msg.type === 'image' ? 'img' : 'video';
-            mediaContent = `<div class="relative inline-block mt-1">${downloadMenu}<${tag} src="${msg.fileUrl}" ${msg.type === 'video' ? 'controls' : ''} class="rounded-lg max-w-[200px] mb-2 border bg-black/10 cursor-pointer" onclick="window.open(this.src)"></${tag}></div>`;
+            if(msg.type === 'image') {
+                mediaContent = `
+                    <div class="relative inline-block mt-1">
+                        <img src="${msg.fileUrl}" class="rounded-lg max-w-[200px] mb-2 border bg-black/10 cursor-pointer hover:opacity-90 transition" 
+                        onclick="viewImage('${msg.fileUrl}', 'image')">
+                    </div>`;
+            } else if (msg.type === 'video') {
+                mediaContent = `
+                    <div class="relative inline-block mt-1">
+                        <video src="${msg.fileUrl}" class="rounded-lg max-w-[200px] mb-2 border bg-black/10 cursor-pointer" onclick="viewImage('${msg.fileUrl}', 'video')"></video>
+                        <button onclick="viewImage('${msg.fileUrl}', 'video')" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/50 text-white rounded-full p-2"><i class="fas fa-play"></i></button>
+                    </div>`;
+            }
         }
         const textContent = msg.text ? `<p class="text-sm leading-relaxed whitespace-pre-wrap">${msg.text}</p>` : '';
         contentHtml = mediaContent + textContent;
@@ -273,11 +372,10 @@ function renderMessage(msg) {
     const bubbleClass = isMe ? 'bg-[#d9fdd3] text-gray-800 rounded-tr-none' : 'bg-white text-gray-800 rounded-tl-none border';
     const timeString = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...';
 
-    // RENDER FINAL BUBBLE (Username & Hapus ada di dalam)
     div.innerHTML = `
         <div class="max-w-[85%] min-w-[140px] px-3 py-2 rounded-xl shadow-sm ${bubbleClass} relative">
-            ${bubbleHeader} ${contentHtml}
-            
+            ${bubbleHeader} 
+            ${contentHtml}
             <div class="flex justify-end items-center gap-1 mt-1">
                 <span class="text-[9px] text-gray-400 select-none">${timeString}</span>
                 ${isMe && !msg.isDeleted ? '<i class="fas fa-check-double text-[9px] text-blue-500"></i>' : ''}
@@ -286,12 +384,6 @@ function renderMessage(msg) {
     `;
     dom.chatBox.appendChild(div);
 }
-
-window.toggleDownloadMenu = (btn) => {
-    const menu = btn.nextElementSibling;
-    menu.classList.toggle('hidden');
-    setTimeout(() => { document.addEventListener('click', function c(e) { if(!menu.contains(e.target) && e.target !== btn) { menu.classList.add('hidden'); document.removeEventListener('click', c); } }); }, 100);
-};
 
 // --- SEND MESSAGE ---
 dom.sendBtn.onclick = async () => {
@@ -332,7 +424,7 @@ dom.sendBtn.onclick = async () => {
         dom.msgInput.value = '';
         dom.fileInput.value = '';
         dom.previewContainer.classList.add('hidden');
-    } catch (e) { alert("Error: " + e.message); } 
+    } catch (e) { showToast("Gagal mengirim: " + e.message, 'error'); } 
     finally { dom.sendBtn.disabled = false; dom.sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>'; }
 };
 
@@ -370,38 +462,39 @@ dom.viewMembersBtn.onclick = () => {
     });
 };
 
-dom.leaveGroupBtn.onclick = async () => {
-    if(!confirm("Keluar dari grup?")) return;
-    dom.groupMenuDropdown.classList.add('hidden');
-    try {
-        const roomRef = doc(db, "rooms", currentRoomId);
-        const roomSnap = await getDoc(roomRef);
-        const rData = roomSnap.data();
+dom.leaveGroupBtn.onclick = () => {
+    showCustomConfirm("Keluar Grup", "Anda akan keluar dari grup ini. Lanjutkan?", async () => {
+        dom.groupMenuDropdown.classList.add('hidden');
+        try {
+            const roomRef = doc(db, "rooms", currentRoomId);
+            const roomSnap = await getDoc(roomRef);
+            const rData = roomSnap.data();
 
-        const newMembers = rData.members.filter(m => ((typeof m === 'object' ? m.uid : m) !== currentUser.uid));
-        const newMemberIds = rData.memberIds.filter(id => id !== currentUser.uid);
+            const newMembers = rData.members.filter(m => ((typeof m === 'object' ? m.uid : m) !== currentUser.uid));
+            const newMemberIds = rData.memberIds.filter(id => id !== currentUser.uid);
 
-        if (newMembers.length === 0) {
-            await deleteDoc(roomRef);
-            const chatQ = query(collection(db, "messages"), where("roomId", "==", currentRoomId));
-            const chatSnap = await getDocs(chatQ);
-            const batch = writeBatch(db);
-            chatSnap.forEach(d => batch.delete(d.ref));
-            await batch.commit();
-            alert("Grup dihapus.");
-        } else {
-            let newLeader = rData.createdBy;
-            if (rData.createdBy === currentUser.email) {
-                const nextUser = newMembers[0];
-                newLeader = (typeof nextUser === 'object') ? nextUser.email : "Unknown";
-                alert(`Admin dialihkan ke: ${newLeader}`);
+            if (newMembers.length === 0) {
+                await deleteDoc(roomRef);
+                const chatQ = query(collection(db, "messages"), where("roomId", "==", currentRoomId));
+                const chatSnap = await getDocs(chatQ);
+                const batch = writeBatch(db);
+                chatSnap.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+                showToast("Grup dihapus karena kosong.", 'success');
+            } else {
+                let newLeader = rData.createdBy;
+                if (rData.createdBy === currentUser.email) {
+                    const nextUser = newMembers[0];
+                    newLeader = (typeof nextUser === 'object') ? nextUser.email : "Unknown";
+                    showToast(`Admin dialihkan ke: ${newLeader}`, 'success');
+                }
+                await updateDoc(roomRef, { members: newMembers, memberIds: newMemberIds, createdBy: newLeader });
+                showToast("Anda telah keluar.", 'success');
             }
-            await updateDoc(roomRef, { members: newMembers, memberIds: newMemberIds, createdBy: newLeader });
-            alert("Anda keluar.");
-        }
-        dom.emptyChatState.classList.remove('hidden');
-        dom.chatHeader.classList.add('hidden');
-        dom.chatBox.classList.add('hidden');
-        dom.chatInputArea.classList.add('hidden');
-    } catch (e) { alert(e.message); }
+            dom.emptyChatState.classList.remove('hidden');
+            dom.chatHeader.classList.add('hidden');
+            dom.chatBox.classList.add('hidden');
+            dom.chatInputArea.classList.add('hidden');
+        } catch (e) { showToast(e.message, 'error'); }
+    });
 };
