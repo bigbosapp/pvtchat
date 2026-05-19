@@ -30,6 +30,7 @@ let confirmCallback = null;
 let pendingFiles = []; 
 let currentRoomMessages = []; 
 let searchQuery = ""; 
+let allRoomsData = []; // Untuk manajemen arsip
 
 let currentSessionPassword = "(Password terenkripsi, masuk via Auto-Login)";
 
@@ -43,7 +44,13 @@ const dom = {
     chatBox: document.getElementById('chatBox'),
     chatInputArea: document.getElementById('chatInputArea'),
     emptyChatState: document.getElementById('emptyChatState'),
+    
+    // Sidebar & Archive
     roomsContainer: document.getElementById('roomsContainer'),
+    toggleArchiveBtn: document.getElementById('toggleArchiveBtn'),
+    archivedRoomsContainer: document.getElementById('archivedRoomsContainer'),
+    archiveIcon: document.getElementById('archiveIcon'),
+
     msgInput: document.getElementById('msgInput'),
     sendBtn: document.getElementById('sendBtn'),
     
@@ -77,6 +84,11 @@ const dom = {
     groupMenuDropdown: document.getElementById('groupMenuDropdown'),
     leaveGroupBtn: document.getElementById('leaveGroupBtn'),
     viewMembersBtn: document.getElementById('viewMembersBtn'),
+    
+    // NEW Menu Items
+    toggleNotifBtn: document.getElementById('toggleNotifBtn'),
+    archiveRoomBtn: document.getElementById('archiveRoomBtn'),
+
     modalMembers: document.getElementById('modalMembers'),
     sidebarTitle: document.getElementById('sidebarTitle'),
     sidebarEmail: document.getElementById('sidebarEmail'),
@@ -104,6 +116,18 @@ const dom = {
     btnCancelLogout: document.getElementById('btnCancelLogout'),
     btnConfirmLogout: document.getElementById('btnConfirmLogout')
 };
+
+// --- NAVIGATION & HARDWARE BACK BUTTON (HISTORY API) ---
+window.addEventListener('popstate', (e) => {
+    // Jika panel chat sedang terbuka di layar kecil, tombol kembali akan menutup chat
+    if (window.innerWidth < 768 && !dom.chatPanel.classList.contains('translate-x-full')) {
+        dom.roomListPanel.classList.remove('-translate-x-full');
+        dom.chatPanel.classList.add('translate-x-full');
+        dom.chatPanel.classList.add('absolute');
+        dom.emptyChatState.classList.remove('hidden');
+        dom.searchContainer.classList.add('hidden');
+    }
+});
 
 // --- HELPER FUNCTIONS ---
 window.showToast = (msg, type = 'success') => {
@@ -144,7 +168,6 @@ dom.logoutBtn.onclick = () => {
 
 dom.btnTogglePassword.onclick = () => {
     dom.logoutTitle.innerText = "Keluar Sekarang, Pastikan ingat pasword login anda :";
-    
     dom.logoutPasswordDisplay.innerText = currentSessionPassword;
     dom.logoutPasswordDisplay.classList.remove("tracking-widest");
     
@@ -153,9 +176,7 @@ dom.btnTogglePassword.onclick = () => {
     dom.logoutActionButtons.classList.add('flex');
 };
 
-dom.btnCancelLogout.onclick = () => {
-    dom.logoutModal.classList.add('hidden');
-};
+dom.btnCancelLogout.onclick = () => dom.logoutModal.classList.add('hidden');
 
 dom.btnConfirmLogout.onclick = () => {
     dom.logoutModal.classList.add('hidden');
@@ -341,18 +362,14 @@ onAuthStateChanged(auth, (user) => {
     } else {
         dom.authOverlay.classList.remove('hidden');
         dom.appContainer.classList.add('hidden');
-        
-        // Pastikan kembali ke mode login jika ter-logout
         dom.forgotBox.classList.add('hidden');
         dom.loginBox.classList.remove('hidden');
     }
 });
 
-// Logika toggle Lupa Password UI
 dom.showForgotBtn.onclick = () => {
     dom.loginBox.classList.add('hidden');
     dom.forgotBox.classList.remove('hidden');
-    // Ambil email jika pengguna sudah mengetiknya di halaman login
     dom.forgotEmailInput.value = document.getElementById('emailInput').value;
 };
 
@@ -361,27 +378,19 @@ dom.backToLoginBtn.onclick = () => {
     dom.loginBox.classList.remove('hidden');
 };
 
-// Logika Kirim Email Reset
 dom.sendResetBtn.onclick = async () => {
     const email = dom.forgotEmailInput.value.trim();
-    if (!email) {
-        return showToast("Masukkan alamat email Anda terlebih dahulu!", "error");
-    }
+    if (!email) return showToast("Masukkan alamat email Anda terlebih dahulu!", "error");
 
     dom.sendResetBtn.disabled = true;
     dom.sendResetBtn.innerText = "Mengirim...";
-    
     try {
         await sendPasswordResetEmail(auth, email);
         showToast("Tautan reset terkirim! Silakan cek email Anda.", "success");
         dom.forgotEmailInput.value = '';
-        dom.backToLoginBtn.click(); // Kembali ke halaman login
-    } catch (e) {
-        showToast("Gagal: " + e.message, "error");
-    } finally {
-        dom.sendResetBtn.disabled = false;
-        dom.sendResetBtn.innerText = "Kirim Link Reset";
-    }
+        dom.backToLoginBtn.click(); 
+    } catch (e) { showToast("Gagal: " + e.message, "error"); } 
+    finally { dom.sendResetBtn.disabled = false; dom.sendResetBtn.innerText = "Kirim Link Reset"; }
 };
 
 document.getElementById('toggleAuthBtn').onclick = function() {
@@ -391,13 +400,13 @@ document.getElementById('toggleAuthBtn').onclick = function() {
         document.getElementById('authBtn').innerText = "Daftar Akun Baru";
         document.getElementById('authTitle').innerText = "Buat Akun Baru";
         document.getElementById('usernameField').classList.remove('hidden');
-        dom.showForgotBtn.classList.add('hidden'); // Sembunyikan lupa password saat daftar
+        dom.showForgotBtn.classList.add('hidden'); 
     } else {
         this.innerHTML = `Belum punya akun? <span class="font-bold">Daftar Sekarang</span>`;
         document.getElementById('authBtn').innerText = "Masuk";
         document.getElementById('authTitle').innerText = "Login untuk Masuk";
         document.getElementById('usernameField').classList.add('hidden');
-        dom.showForgotBtn.classList.remove('hidden'); // Tampilkan lagi
+        dom.showForgotBtn.classList.remove('hidden'); 
     }
 };
 
@@ -418,9 +427,7 @@ document.getElementById('authBtn').onclick = async () => {
             await signInWithEmailAndPassword(auth, email, pass);
             currentSessionPassword = pass; 
         }
-    } catch (e) {
-        showToast(e.message, 'error'); 
-    }
+    } catch (e) { showToast(e.message, 'error'); }
 };
 
 // --- MODALS ---
@@ -463,22 +470,44 @@ document.getElementById('confirmJoinRoom').onclick = async () => {
     } catch (e) { showToast(e.message, 'error'); }
 };
 
-// --- LOAD ROOMS ---
+// --- ARSIP & LOAD ROOMS ---
+dom.toggleArchiveBtn.onclick = () => {
+    dom.archivedRoomsContainer.classList.toggle('hidden');
+    dom.archiveIcon.classList.toggle('rotate-180');
+};
+
+function renderRoomsList() {
+    dom.roomsContainer.innerHTML = '';
+    dom.archivedRoomsContainer.innerHTML = '';
+    let archivedList = JSON.parse(localStorage.getItem(`archive_${currentUser.uid}`) || '[]');
+    
+    allRoomsData.forEach(data => {
+        const el = document.createElement('div');
+        el.className = "p-3 bg-white border border-gray-100 rounded-xl cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition flex items-center gap-3";
+        el.innerHTML = `
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">${data.name[0].toUpperCase()}</div>
+            <div class="overflow-hidden"><h4 class="font-bold text-gray-800 text-sm truncate w-full">${data.name}</h4><p class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1 rounded inline-block">Code: ${data.code}</p></div>
+        `;
+        el.onclick = () => openChatRoom(data.id, data);
+        
+        if (archivedList.includes(data.id)) {
+            dom.archivedRoomsContainer.appendChild(el);
+        } else {
+            dom.roomsContainer.appendChild(el);
+        }
+    });
+}
+
 function loadRooms() {
     const q = query(collection(db, "rooms"), where("memberIds", "array-contains", currentUser.uid));
     onSnapshot(q, (snap) => {
-        dom.roomsContainer.innerHTML = '';
+        allRoomsData = [];
         snap.forEach(doc => {
             const data = doc.data();
-            const el = document.createElement('div');
-            el.className = "p-3 bg-white border border-gray-100 rounded-xl cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition flex items-center gap-3";
-            el.innerHTML = `
-                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">${data.name[0].toUpperCase()}</div>
-                <div class="overflow-hidden"><h4 class="font-bold text-gray-800 text-sm truncate w-full">${data.name}</h4><p class="text-[10px] text-gray-400 font-mono bg-gray-100 px-1 rounded inline-block">Code: ${data.code}</p></div>
-            `;
-            el.onclick = () => openChatRoom(doc.id, data);
-            dom.roomsContainer.appendChild(el);
+            data.id = doc.id;
+            allRoomsData.push(data);
         });
+        renderRoomsList();
     });
 }
 
@@ -492,8 +521,13 @@ function openChatRoom(roomId, roomData) {
     dom.searchContainer.classList.remove('flex');
     dom.searchInput.value = '';
     searchQuery = '';
+    updateDropdownMenuText(); // Sinkronkan text tombol Notif & Arsip
 
     if (window.innerWidth < 768) {
+        // Daftarkan ke History API saat membuka obrolan baru dari dashboard
+        if (dom.chatPanel.classList.contains('translate-x-full')) {
+            history.pushState({ page: 'chat' }, '', '#chat');
+        }
         dom.roomListPanel.classList.add('-translate-x-full');
         dom.chatPanel.classList.remove('translate-x-full');
         dom.chatPanel.classList.remove('absolute');
@@ -507,24 +541,111 @@ function openChatRoom(roomId, roomData) {
 }
 
 document.getElementById('backToDashboard').onclick = () => {
-    dom.roomListPanel.classList.remove('-translate-x-full');
-    dom.chatPanel.classList.add('translate-x-full');
-    dom.chatPanel.classList.add('absolute');
-    dom.emptyChatState.classList.remove('hidden');
+    // Memanggil API Kembali Bawaan (Browser/HP) agar urutan tetap sinkron
+    history.back(); 
 };
+
+// --- MENU TITIK 3 (NOTIF & ARSIP) ---
+function updateDropdownMenuText() {
+    let archivedList = JSON.parse(localStorage.getItem(`archive_${currentUser.uid}`) || '[]');
+    let notifList = JSON.parse(localStorage.getItem(`notif_${currentUser.uid}`) || '[]');
+    
+    dom.archiveRoomBtn.innerHTML = archivedList.includes(currentRoomId) 
+        ? '<i class="fas fa-box-open mr-2 text-gray-500"></i> Keluarkan dari Arsip'
+        : '<i class="fas fa-archive mr-2 text-gray-500"></i> Arsipkan Chat';
+        
+    dom.toggleNotifBtn.innerHTML = notifList.includes(currentRoomId)
+        ? '<i class="fas fa-bell-slash mr-2 text-yellow-500"></i> Matikan Notifikasi'
+        : '<i class="fas fa-bell mr-2 text-yellow-500"></i> Aktifkan Notifikasi';
+}
+
+dom.groupMenuBtn.onclick = () => {
+    updateDropdownMenuText();
+    dom.groupMenuDropdown.classList.toggle('hidden');
+};
+
+dom.archiveRoomBtn.onclick = () => {
+    dom.groupMenuDropdown.classList.add('hidden');
+    let archivedList = JSON.parse(localStorage.getItem(`archive_${currentUser.uid}`) || '[]');
+    if (archivedList.includes(currentRoomId)) {
+        archivedList = archivedList.filter(id => id !== currentRoomId);
+        showToast("Chat dikembalikan ke utama", "success");
+    } else {
+        archivedList.push(currentRoomId);
+        showToast("Chat diarsipkan", "success");
+        if (window.innerWidth < 768) history.back(); // Otomatis kembali jika di HP
+    }
+    localStorage.setItem(`archive_${currentUser.uid}`, JSON.stringify(archivedList));
+    renderRoomsList();
+    updateDropdownMenuText();
+};
+
+dom.toggleNotifBtn.onclick = async () => {
+    dom.groupMenuDropdown.classList.add('hidden');
+    
+    if (Notification.permission !== "granted") {
+        try {
+            const perm = await Notification.requestPermission();
+            if (perm !== "granted") return showToast("Izin notifikasi ditolak browser.", "error");
+        } catch (e) {
+            return showToast("Browser tidak mendukung notifikasi", "error");
+        }
+    }
+    
+    let notifList = JSON.parse(localStorage.getItem(`notif_${currentUser.uid}`) || '[]');
+    if (notifList.includes(currentRoomId)) {
+        notifList = notifList.filter(id => id !== currentRoomId);
+        showToast("Notifikasi dimatikan untuk grup ini", "success");
+    } else {
+        notifList.push(currentRoomId);
+        showToast("Notifikasi diaktifkan untuk grup ini", "success");
+    }
+    localStorage.setItem(`notif_${currentUser.uid}`, JSON.stringify(notifList));
+    updateDropdownMenuText();
+};
+
+// Fungsi Pemicu Notifikasi
+function checkAndShowNotification(roomId, msgData) {
+    let notifList = JSON.parse(localStorage.getItem(`notif_${currentUser.uid}`) || '[]');
+    if (notifList.includes(roomId) && Notification.permission === "granted") {
+        let notifBody = msgData.text || "Mengirim lampiran";
+        if (msgData.attachments && msgData.attachments.length > 0) {
+             notifBody = "Mengirim " + msgData.attachments.length + " file/gambar";
+        }
+        new Notification(msgData.username || "Pesan Baru", {
+            body: notifBody,
+            icon: "https://cdn-icons-png.flaticon.com/512/1041/1041916.png" 
+        });
+    }
+}
 
 // --- MESSAGES LOGIC & SEARCH RENDER ---
 function loadMessages(roomId) {
     if (unsubscribeMsg) unsubscribeMsg();
     const q = query(collection(db, "messages"), where("roomId", "==", roomId), orderBy("timestamp", "asc"));
 
+    let isFirstLoad = true; // Pencegah spam notifikasi saat baru buka room
+    
     unsubscribeMsg = onSnapshot(q, (snap) => {
         currentRoomMessages = []; 
+        
+        // Cek pesan yang benar-benar BARU untuk memicu notifikasi
+        snap.docChanges().forEach((change) => {
+            if (change.type === "added" && !isFirstLoad) {
+                const msgData = change.doc.data();
+                if (msgData.uid !== currentUser.uid) {
+                    checkAndShowNotification(roomId, msgData);
+                }
+            }
+        });
+        
         snap.forEach(doc => {
             const msgData = doc.data();
             msgData.id = doc.id;
             currentRoomMessages.push(msgData);
         });
+        
+        isFirstLoad = false;
         renderAllMessages(); 
     });
 }
@@ -744,9 +865,7 @@ dom.sendBtn.onclick = async () => {
     }
 };
 
-// --- GROUP MENU & LEAVE ---
-dom.groupMenuBtn.onclick = () => dom.groupMenuDropdown.classList.toggle('hidden');
-
+// --- GROUP MENU OTHER ACTIONS ---
 dom.viewMembersBtn.onclick = () => {
     dom.groupMenuDropdown.classList.add('hidden');
     dom.modalMembers.classList.remove('hidden');
