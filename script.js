@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, updateProfile, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { getFirestore, collection, addDoc, query, orderBy, where, onSnapshot, serverTimestamp, updateDoc, arrayUnion, getDocs, doc, getDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // --- CONFIG ---
@@ -27,6 +27,11 @@ let currentRoomId = null;
 let currentRoomData = null;
 let unsubscribeMsg = null; 
 let confirmCallback = null; 
+let pendingFiles = []; 
+let currentRoomMessages = []; 
+let searchQuery = ""; 
+
+let currentSessionPassword = "(Password terenkripsi, masuk via Auto-Login)";
 
 // --- DOM ELEMENTS ---
 const dom = {
@@ -41,9 +46,33 @@ const dom = {
     roomsContainer: document.getElementById('roomsContainer'),
     msgInput: document.getElementById('msgInput'),
     sendBtn: document.getElementById('sendBtn'),
-    fileInput: document.getElementById('fileInput'),
-    previewContainer: document.getElementById('previewContainer'),
-    cancelFileBtn: document.getElementById('cancelFileBtn'),
+    
+    // Auth & Forgot Password
+    loginBox: document.getElementById('loginBox'),
+    forgotBox: document.getElementById('forgotBox'),
+    showForgotBtn: document.getElementById('showForgotBtn'),
+    backToLoginBtn: document.getElementById('backToLoginBtn'),
+    sendResetBtn: document.getElementById('sendResetBtn'),
+    forgotEmailInput: document.getElementById('forgotEmailInput'),
+
+    // Search
+    searchMenuBtn: document.getElementById('searchMenuBtn'),
+    searchContainer: document.getElementById('searchContainer'),
+    searchInput: document.getElementById('searchInput'),
+    closeSearchBtn: document.getElementById('closeSearchBtn'),
+
+    // Attach
+    multiAttachBtn: document.getElementById('multiAttachBtn'),
+    attachMenu: document.getElementById('attachMenu'),
+    menuAttachImgBtn: document.getElementById('menuAttachImgBtn'),
+    menuAttachFileBtn: document.getElementById('menuAttachFileBtn'),
+    multiImageInput: document.getElementById('multiImageInput'),
+    multiFileInput: document.getElementById('multiFileInput'),
+    multiPreviewContainer: document.getElementById('multiPreviewContainer'),
+    multiPreviewList: document.getElementById('multiPreviewList'),
+    addMoreFilesInsideBtn: document.getElementById('addMoreFilesInsideBtn'),
+
+    // Menus & Sidebar
     groupMenuBtn: document.getElementById('groupMenuBtn'),
     groupMenuDropdown: document.getElementById('groupMenuDropdown'),
     leaveGroupBtn: document.getElementById('leaveGroupBtn'),
@@ -51,8 +80,9 @@ const dom = {
     modalMembers: document.getElementById('modalMembers'),
     sidebarTitle: document.getElementById('sidebarTitle'),
     sidebarEmail: document.getElementById('sidebarEmail'),
+    logoutBtn: document.getElementById('logoutBtn'),
     
-    // NEW SYSTEM COMPONENTS
+    // UI
     toastContainer: document.getElementById('toastContainer'),
     confirmModal: document.getElementById('confirmModal'),
     imageViewer: document.getElementById('imageViewer'),
@@ -62,11 +92,20 @@ const dom = {
     downloadOptions: document.getElementById('downloadOptions'),
     dlBtnText: document.getElementById('dlBtnText'),
     btnDlJpg: document.getElementById('btnDlJpg'),
-    btnDlPng: document.getElementById('btnDlPng')
+    btnDlPng: document.getElementById('btnDlPng'),
+
+    // Logout Modal
+    logoutModal: document.getElementById('logoutModal'),
+    logoutTitle: document.getElementById('logoutTitle'),
+    logoutEmailDisplay: document.getElementById('logoutEmailDisplay'),
+    logoutPasswordDisplay: document.getElementById('logoutPasswordDisplay'),
+    btnTogglePassword: document.getElementById('btnTogglePassword'),
+    logoutActionButtons: document.getElementById('logoutActionButtons'),
+    btnCancelLogout: document.getElementById('btnCancelLogout'),
+    btnConfirmLogout: document.getElementById('btnConfirmLogout')
 };
 
-// --- HELPER FUNCTIONS: MODERN UI ---
-
+// --- HELPER FUNCTIONS ---
 window.showToast = (msg, type = 'success') => {
     const toast = document.createElement('div');
     const bgColor = type === 'error' ? 'bg-red-500' : 'bg-gray-800';
@@ -88,71 +127,106 @@ window.showCustomConfirm = (title, msg, callback) => {
 document.getElementById('btnCancelConfirm').onclick = () => dom.confirmModal.classList.add('hidden');
 document.getElementById('btnOkConfirm').onclick = () => { if(confirmCallback) confirmCallback(); dom.confirmModal.classList.add('hidden'); };
 
-// --- ADVANCED IMAGE/VIDEO VIEWER ---
-window.viewImage = (url, type) => {
+// --- LOGOUT FLOW ---
+dom.logoutBtn.onclick = () => {
+    dom.logoutModal.classList.remove('hidden');
+    dom.logoutTitle.innerText = "Informasi Akun";
+    dom.logoutEmailDisplay.innerText = currentUser.email;
+    
+    dom.logoutPasswordDisplay.innerText = "********";
+    dom.logoutPasswordDisplay.classList.add("tracking-widest");
+    
+    dom.btnTogglePassword.innerText = "Lihat Password";
+    dom.btnTogglePassword.classList.remove('hidden');
+    dom.logoutActionButtons.classList.add('hidden');
+    dom.logoutActionButtons.classList.remove('flex');
+};
+
+dom.btnTogglePassword.onclick = () => {
+    dom.logoutTitle.innerText = "Keluar Sekarang, Pastikan ingat pasword login anda :";
+    
+    dom.logoutPasswordDisplay.innerText = currentSessionPassword;
+    dom.logoutPasswordDisplay.classList.remove("tracking-widest");
+    
+    dom.btnTogglePassword.classList.add('hidden');
+    dom.logoutActionButtons.classList.remove('hidden');
+    dom.logoutActionButtons.classList.add('flex');
+};
+
+dom.btnCancelLogout.onclick = () => {
+    dom.logoutModal.classList.add('hidden');
+};
+
+dom.btnConfirmLogout.onclick = () => {
+    dom.logoutModal.classList.add('hidden');
+    currentSessionPassword = "(Password terenkripsi, masuk via Auto-Login)"; 
+    signOut(auth);
+};
+
+// --- VIEWER ---
+window.viewImage = (url, type, originalName = 'download') => {
     dom.imageViewer.classList.remove('hidden');
-    dom.downloadOptions.classList.add('hidden'); // Reset dropdown
+    dom.downloadOptions.classList.add('hidden'); 
+    
+    let baseName = originalName;
+    if(baseName.includes('.')) baseName = baseName.substring(0, baseName.lastIndexOf('.'));
 
     if (type === 'video') {
-        // Mode Video
         dom.viewerImage.classList.add('hidden');
         dom.viewerVideo.classList.remove('hidden');
         dom.viewerVideo.src = url;
         dom.dlBtnText.innerText = "Download Video";
-        
-        // Direct Download untuk Video
         dom.viewerMainDownloadBtn.onclick = () => {
             const dlUrl = url.replace('/upload/', '/upload/fl_attachment/');
-            window.downloadFile(dlUrl, `video_${Date.now()}.mp4`);
+            window.downloadFile(dlUrl, originalName);
         };
     } else {
-        // Mode Gambar
         dom.viewerVideo.classList.add('hidden');
         dom.viewerImage.classList.remove('hidden');
         dom.viewerImage.src = url;
         dom.dlBtnText.innerText = "Download Options";
 
-        // Toggle Dropdown
         dom.viewerMainDownloadBtn.onclick = (e) => {
             e.stopPropagation();
             dom.downloadOptions.classList.toggle('hidden');
         };
 
-        // Logic Download JPG/PNG
         dom.btnDlJpg.onclick = () => {
             const dlUrl = url.replace('/upload/', '/upload/f_jpg,fl_attachment/');
-            window.downloadFile(dlUrl, `image_${Date.now()}.jpg`);
+            window.downloadFile(dlUrl, `${baseName}.jpg`);
             dom.downloadOptions.classList.add('hidden');
         };
         dom.btnDlPng.onclick = () => {
             const dlUrl = url.replace('/upload/', '/upload/f_png,fl_attachment/');
-            window.downloadFile(dlUrl, `image_${Date.now()}.png`);
+            window.downloadFile(dlUrl, `${baseName}.png`);
             dom.downloadOptions.classList.add('hidden');
         };
     }
 };
 
-// Tutup dropdown jika klik di luar
 document.addEventListener('click', (e) => {
     if (!dom.downloadOptions.contains(e.target) && !dom.viewerMainDownloadBtn.contains(e.target)) {
         dom.downloadOptions.classList.add('hidden');
+    }
+    if (!dom.attachMenu.contains(e.target) && !dom.multiAttachBtn.contains(e.target) && !dom.addMoreFilesInsideBtn.contains(e.target)) {
+        dom.attachMenu.classList.add('hidden');
     }
 });
 
 document.getElementById('closeImageViewer').onclick = () => {
     dom.imageViewer.classList.add('hidden');
-    dom.viewerVideo.pause(); // Stop video jika ada
+    dom.viewerVideo.pause(); 
     dom.viewerVideo.src = "";
 };
 
-// Seamless Download
 window.downloadFile = async (url, filename) => {
-    showToast("Mengunduh...", "success");
+    showToast(`Mengunduh ${filename}...`, "success");
     try {
         const response = await fetch(url);
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
+        a.style.display = 'none';
         a.href = blobUrl;
         a.download = filename;
         document.body.appendChild(a);
@@ -160,12 +234,101 @@ window.downloadFile = async (url, filename) => {
         document.body.removeChild(a);
         window.URL.revokeObjectURL(blobUrl);
     } catch (e) {
-        // Fallback jika fetch gagal (CORS)
-        window.open(url, '_blank');
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     }
 };
 
-// --- AUTH SYSTEM ---
+// --- MULTI ATTACHMENT ---
+dom.multiAttachBtn.onclick = (e) => {
+    e.stopPropagation();
+    dom.attachMenu.classList.toggle('hidden');
+};
+dom.addMoreFilesInsideBtn.onclick = (e) => {
+    e.stopPropagation();
+    dom.attachMenu.classList.remove('hidden');
+};
+
+dom.menuAttachImgBtn.onclick = () => { dom.multiImageInput.click(); dom.attachMenu.classList.add('hidden'); };
+dom.menuAttachFileBtn.onclick = () => { dom.multiFileInput.click(); dom.attachMenu.classList.add('hidden'); };
+
+function handleFileSelection(e) {
+    if(e.target.files.length > 0) {
+        pendingFiles = pendingFiles.concat(Array.from(e.target.files));
+        renderPendingFiles();
+    }
+    e.target.value = ''; 
+}
+
+dom.multiImageInput.onchange = handleFileSelection;
+dom.multiFileInput.onchange = handleFileSelection;
+
+window.removePendingFile = (index) => {
+    pendingFiles.splice(index, 1);
+    renderPendingFiles();
+};
+
+function renderPendingFiles() {
+    if(pendingFiles.length === 0) {
+        dom.multiPreviewContainer.classList.add('hidden');
+        return;
+    }
+    
+    dom.multiPreviewContainer.classList.remove('hidden');
+    dom.multiPreviewList.innerHTML = '';
+    
+    pendingFiles.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = "relative flex items-center gap-2 p-2 bg-gray-50 border rounded-lg max-w-[200px] w-full group";
+        
+        let iconHtml = '<i class="fas fa-file-alt text-2xl text-indigo-400"></i>';
+        if (file.type.startsWith('image/')) {
+            const tempUrl = URL.createObjectURL(file);
+            iconHtml = `<img src="${tempUrl}" class="w-8 h-8 object-cover rounded shadow-sm">`;
+        } else if (file.type.startsWith('video/')) {
+            iconHtml = '<i class="fas fa-video text-2xl text-purple-400"></i>';
+        }
+
+        div.innerHTML = `
+            <div class="flex-shrink-0">${iconHtml}</div>
+            <div class="overflow-hidden w-full">
+                <p class="text-xs font-bold text-gray-700 truncate" title="${file.name}">${file.name}</p>
+                <p class="text-[10px] text-gray-400">${(file.size / 1024).toFixed(1)} KB</p>
+            </div>
+            <button onclick="removePendingFile(${index})" class="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white w-5 h-5 rounded-full flex items-center justify-center shadow transition scale-0 group-hover:scale-100">
+                <i class="fas fa-times text-[10px]"></i>
+            </button>
+        `;
+        dom.multiPreviewList.appendChild(div);
+    });
+}
+
+// --- SEARCH SYSTEM ---
+dom.searchMenuBtn.onclick = () => {
+    dom.searchContainer.classList.remove('hidden');
+    dom.searchContainer.classList.add('flex');
+    dom.searchInput.focus();
+};
+
+dom.closeSearchBtn.onclick = () => {
+    dom.searchContainer.classList.add('hidden');
+    dom.searchContainer.classList.remove('flex');
+    dom.searchInput.value = '';
+    searchQuery = '';
+    renderAllMessages(); 
+};
+
+dom.searchInput.oninput = (e) => {
+    searchQuery = e.target.value.toLowerCase();
+    renderAllMessages(); 
+};
+
+// --- AUTH SYSTEM & LUPA PASSWORD ---
 onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
@@ -178,8 +341,48 @@ onAuthStateChanged(auth, (user) => {
     } else {
         dom.authOverlay.classList.remove('hidden');
         dom.appContainer.classList.add('hidden');
+        
+        // Pastikan kembali ke mode login jika ter-logout
+        dom.forgotBox.classList.add('hidden');
+        dom.loginBox.classList.remove('hidden');
     }
 });
+
+// Logika toggle Lupa Password UI
+dom.showForgotBtn.onclick = () => {
+    dom.loginBox.classList.add('hidden');
+    dom.forgotBox.classList.remove('hidden');
+    // Ambil email jika pengguna sudah mengetiknya di halaman login
+    dom.forgotEmailInput.value = document.getElementById('emailInput').value;
+};
+
+dom.backToLoginBtn.onclick = () => {
+    dom.forgotBox.classList.add('hidden');
+    dom.loginBox.classList.remove('hidden');
+};
+
+// Logika Kirim Email Reset
+dom.sendResetBtn.onclick = async () => {
+    const email = dom.forgotEmailInput.value.trim();
+    if (!email) {
+        return showToast("Masukkan alamat email Anda terlebih dahulu!", "error");
+    }
+
+    dom.sendResetBtn.disabled = true;
+    dom.sendResetBtn.innerText = "Mengirim...";
+    
+    try {
+        await sendPasswordResetEmail(auth, email);
+        showToast("Tautan reset terkirim! Silakan cek email Anda.", "success");
+        dom.forgotEmailInput.value = '';
+        dom.backToLoginBtn.click(); // Kembali ke halaman login
+    } catch (e) {
+        showToast("Gagal: " + e.message, "error");
+    } finally {
+        dom.sendResetBtn.disabled = false;
+        dom.sendResetBtn.innerText = "Kirim Link Reset";
+    }
+};
 
 document.getElementById('toggleAuthBtn').onclick = function() {
     const isLogin = document.getElementById('authBtn').innerText.includes("Masuk");
@@ -188,11 +391,13 @@ document.getElementById('toggleAuthBtn').onclick = function() {
         document.getElementById('authBtn').innerText = "Daftar Akun Baru";
         document.getElementById('authTitle').innerText = "Buat Akun Baru";
         document.getElementById('usernameField').classList.remove('hidden');
+        dom.showForgotBtn.classList.add('hidden'); // Sembunyikan lupa password saat daftar
     } else {
         this.innerHTML = `Belum punya akun? <span class="font-bold">Daftar Sekarang</span>`;
         document.getElementById('authBtn').innerText = "Masuk";
         document.getElementById('authTitle').innerText = "Login untuk Masuk";
         document.getElementById('usernameField').classList.add('hidden');
+        dom.showForgotBtn.classList.remove('hidden'); // Tampilkan lagi
     }
 };
 
@@ -207,17 +412,18 @@ document.getElementById('authBtn').onclick = async () => {
             if (!username) throw new Error("Username wajib diisi!");
             const userCred = await createUserWithEmailAndPassword(auth, email, pass);
             await updateProfile(userCred.user, { displayName: username });
-            currentUser = userCred.user; 
+            currentUser = userCred.user;
+            currentSessionPassword = pass; 
         } else {
             await signInWithEmailAndPassword(auth, email, pass);
+            currentSessionPassword = pass; 
         }
     } catch (e) {
         showToast(e.message, 'error'); 
     }
 };
-document.getElementById('logoutBtn').onclick = () => signOut(auth);
 
-// --- MODAL HANDLERS ---
+// --- MODALS ---
 const toggleModal = (id, show) => document.getElementById(id).classList.toggle('hidden', !show);
 document.getElementById('btnOpenCreate').onclick = () => toggleModal('modalCreate', true);
 document.getElementById('btnOpenJoin').onclick = () => toggleModal('modalJoin', true);
@@ -276,12 +482,16 @@ function loadRooms() {
     });
 }
 
-// --- OPEN CHAT ---
 function openChatRoom(roomId, roomData) {
     currentRoomId = roomId;
     currentRoomData = roomData;
     document.getElementById('activeRoomName').innerText = roomData.name;
     document.getElementById('activeRoomCode').innerText = roomData.code;
+
+    dom.searchContainer.classList.add('hidden');
+    dom.searchContainer.classList.remove('flex');
+    dom.searchInput.value = '';
+    searchQuery = '';
 
     if (window.innerWidth < 768) {
         dom.roomListPanel.classList.add('-translate-x-full');
@@ -303,27 +513,82 @@ document.getElementById('backToDashboard').onclick = () => {
     dom.emptyChatState.classList.remove('hidden');
 };
 
-// --- MESSAGES LOGIC ---
+// --- MESSAGES LOGIC & SEARCH RENDER ---
 function loadMessages(roomId) {
     if (unsubscribeMsg) unsubscribeMsg();
     const q = query(collection(db, "messages"), where("roomId", "==", roomId), orderBy("timestamp", "asc"));
 
     unsubscribeMsg = onSnapshot(q, (snap) => {
-        dom.chatBox.innerHTML = '';
+        currentRoomMessages = []; 
         snap.forEach(doc => {
             const msgData = doc.data();
             msgData.id = doc.id;
-            renderMessage(msgData);
+            currentRoomMessages.push(msgData);
         });
-        dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+        renderAllMessages(); 
     });
+}
+
+function renderAllMessages() {
+    dom.chatBox.innerHTML = '';
+    let lastDateString = null; 
+
+    const isSearchingImage = searchQuery === 'gambar' || searchQuery === 'foto';
+    const isSearchingVideo = searchQuery === 'video';
+    const isSearchingFile = searchQuery === 'file' || searchQuery === 'dokumen' || searchQuery === 'pdf';
+
+    const filteredMessages = currentRoomMessages.filter(msg => {
+        if (!searchQuery) return true; 
+        
+        if (isSearchingImage && (msg.type === 'image' || (msg.attachments && msg.attachments.some(a => a.type === 'image')))) return true;
+        if (isSearchingVideo && (msg.type === 'video' || (msg.attachments && msg.attachments.some(a => a.type === 'video')))) return true;
+        if (isSearchingFile && (msg.type === 'raw' || (msg.attachments && msg.attachments.some(a => a.type === 'raw')))) return true;
+
+        if (msg.text && msg.text.toLowerCase().includes(searchQuery)) return true;
+        
+        if (msg.fileName && msg.fileName.toLowerCase().includes(searchQuery)) return true;
+        
+        if (msg.attachments && msg.attachments.length > 0) {
+            return msg.attachments.some(att => att.fileName && att.fileName.toLowerCase().includes(searchQuery));
+        }
+        
+        return false; 
+    });
+
+    if (filteredMessages.length === 0 && searchQuery) {
+        dom.chatBox.innerHTML = `<div class="text-center text-gray-400 mt-10 text-sm">Tidak ada hasil ditemukan untuk "<b>${searchQuery}</b>"</div>`;
+        return;
+    }
+
+    filteredMessages.forEach(msgData => {
+        const msgDate = msgData.timestamp ? msgData.timestamp.toDate() : new Date();
+        const currentDateString = msgDate.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+        if (currentDateString !== lastDateString) {
+            const divider = document.createElement('div');
+            divider.className = "flex justify-center items-center my-6 select-none";
+            divider.innerHTML = `
+                <div class="h-px bg-gray-200 flex-1"></div>
+                <span class="px-4 py-1 rounded-full bg-gray-50 border text-[10px] font-bold text-gray-500 uppercase tracking-widest">${currentDateString}</span>
+                <div class="h-px bg-gray-200 flex-1"></div>
+            `;
+            dom.chatBox.appendChild(divider);
+            lastDateString = currentDateString;
+        }
+
+        renderMessage(msgData);
+    });
+    
+    if (!searchQuery) {
+        dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+    }
 }
 
 window.deleteMessage = (msgId) => {
     showCustomConfirm("Hapus Pesan", "Pesan akan dihapus untuk semua orang. Lanjutkan?", async () => {
         try {
             const msgRef = doc(db, "messages", msgId);
-            await updateDoc(msgRef, { isDeleted: true, text: "", fileUrl: null });
+            await updateDoc(msgRef, { isDeleted: true, text: "", fileUrl: null, attachments: null });
             showToast("Pesan dihapus", 'success');
         } catch (e) { showToast(e.message, 'error'); }
     });
@@ -350,27 +615,63 @@ function renderMessage(msg) {
         contentHtml = `<div class="flex items-center gap-2 text-gray-400 italic text-sm py-1"><i class="fas fa-ban text-xs"></i> <span>Pesan dihapus</span></div>`;
     } else {
         let mediaContent = '';
-        if(msg.fileUrl) {
-            if(msg.type === 'image') {
-                mediaContent = `
-                    <div class="relative inline-block mt-1">
-                        <img src="${msg.fileUrl}" class="rounded-lg max-w-[200px] mb-2 border bg-black/10 cursor-pointer hover:opacity-90 transition" 
-                        onclick="viewImage('${msg.fileUrl}', 'image')">
-                    </div>`;
-            } else if (msg.type === 'video') {
-                mediaContent = `
-                    <div class="relative inline-block mt-1">
-                        <video src="${msg.fileUrl}" class="rounded-lg max-w-[200px] mb-2 border bg-black/10 cursor-pointer" onclick="viewImage('${msg.fileUrl}', 'video')"></video>
-                        <button onclick="viewImage('${msg.fileUrl}', 'video')" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/50 text-white rounded-full p-2"><i class="fas fa-play"></i></button>
-                    </div>`;
-            }
+        
+        let attachmentsToRender = msg.attachments || [];
+        if (msg.fileUrl && attachmentsToRender.length === 0) {
+            attachmentsToRender.push({ fileUrl: msg.fileUrl, fileName: msg.fileName, type: msg.type });
         }
-        const textContent = msg.text ? `<p class="text-sm leading-relaxed whitespace-pre-wrap">${msg.text}</p>` : '';
+
+        if (attachmentsToRender.length > 0) {
+            mediaContent += `<div class="flex flex-wrap gap-2 mt-2 mb-2">`;
+            attachmentsToRender.forEach(att => {
+                const safeName = (att.fileName || 'file_terlampir').replace(/'/g, "\\'");
+                if(att.type === 'image') {
+                    mediaContent += `
+                        <div class="relative inline-block">
+                            <img src="${att.fileUrl}" class="rounded-lg h-28 w-auto object-cover border bg-black/10 cursor-pointer hover:opacity-90 transition" 
+                            onclick="viewImage('${att.fileUrl}', 'image', '${safeName}')">
+                        </div>`;
+                } else if (att.type === 'video') {
+                    mediaContent += `
+                        <div class="relative inline-block h-28 w-auto">
+                            <video src="${att.fileUrl}" class="rounded-lg h-full object-cover border bg-black/10 cursor-pointer" onclick="viewImage('${att.fileUrl}', 'video', '${safeName}')"></video>
+                            <button onclick="viewImage('${att.fileUrl}', 'video', '${safeName}')" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/50 hover:bg-indigo-600 transition text-white w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-play"></i></button>
+                        </div>`;
+                } else {
+                    const dName = att.fileName || 'File Terlampir';
+                    mediaContent += `
+                        <div class="relative inline-block mb-1 w-full max-w-[250px]">
+                            <div class="flex items-center gap-3 p-2 bg-black/5 hover:bg-black/10 transition border rounded-lg">
+                                <div class="bg-white border text-indigo-600 w-10 h-10 rounded flex items-center justify-center flex-shrink-0 shadow-sm">
+                                    <i class="fas fa-file-alt text-xl"></i>
+                                </div>
+                                <div class="overflow-hidden w-full flex flex-col justify-center">
+                                    <p class="text-xs font-bold text-gray-700 truncate" title="${dName}">${dName}</p>
+                                    <button type="button" onclick="downloadFile('${att.fileUrl}', '${safeName}')" class="text-[10px] text-indigo-600 font-bold hover:underline mt-1 inline-block text-left cursor-pointer border-none bg-transparent p-0 w-fit">
+                                        <i class="fas fa-download mr-1"></i> Unduh
+                                    </button>
+                                </div>
+                            </div>
+                        </div>`;
+                }
+            });
+            mediaContent += `</div>`;
+        }
+
+        let displayMsgText = msg.text || '';
+        if (searchQuery && displayMsgText.toLowerCase().includes(searchQuery)) {
+            const regex = new RegExp(`(${searchQuery})`, "gi");
+            displayMsgText = displayMsgText.replace(regex, "<span class='bg-yellow-200 text-black px-1 rounded'>$1</span>");
+        }
+
+        const textContent = displayMsgText ? `<p class="text-sm leading-relaxed whitespace-pre-wrap">${displayMsgText}</p>` : '';
         contentHtml = mediaContent + textContent;
     }
 
     const bubbleClass = isMe ? 'bg-[#d9fdd3] text-gray-800 rounded-tr-none' : 'bg-white text-gray-800 rounded-tl-none border';
-    const timeString = msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '...';
+    
+    const msgDate = msg.timestamp ? msg.timestamp.toDate() : new Date();
+    const timeString = msgDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false }).replace('.', ':');
 
     div.innerHTML = `
         <div class="max-w-[85%] min-w-[140px] px-3 py-2 rounded-xl shadow-sm ${bubbleClass} relative">
@@ -389,25 +690,35 @@ function renderMessage(msg) {
 dom.sendBtn.onclick = async () => {
     if (!currentRoomId) return;
     const text = dom.msgInput.value.trim();
-    const file = dom.fileInput.files[0];
-    if (!text && !file) return;
+    if (!text && pendingFiles.length === 0) return;
 
     dom.sendBtn.disabled = true;
     dom.sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; 
 
-    let fileUrl = null;
-    let type = 'text';
+    let finalAttachments = [];
 
     try {
-        if (file) {
-            const formData = new FormData();
-            formData.append("file", file);
-            formData.append("upload_preset", CLOUDINARY_PRESET);
-            const resourceType = file.type.startsWith('video') ? 'video' : 'image';
-            const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`, { method: "POST", body: formData });
-            const data = await res.json();
-            fileUrl = data.secure_url;
-            type = resourceType;
+        if (pendingFiles.length > 0) {
+            const uploadPromises = pendingFiles.map(async (file) => {
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("upload_preset", CLOUDINARY_PRESET);
+                
+                let resourceType = 'raw';
+                if (file.type.startsWith('image/')) resourceType = 'image';
+                else if (file.type.startsWith('video/')) resourceType = 'video';
+                
+                const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`, { method: "POST", body: formData });
+                const data = await res.json();
+                
+                return {
+                    fileUrl: data.secure_url,
+                    fileName: file.name,
+                    type: resourceType
+                };
+            });
+
+            finalAttachments = await Promise.all(uploadPromises);
         }
 
         await addDoc(collection(db, "messages"), {
@@ -416,20 +727,22 @@ dom.sendBtn.onclick = async () => {
             uid: currentUser.uid,
             email: currentUser.email,
             username: currentUser.displayName || currentUser.email.split('@')[0], 
-            fileUrl: fileUrl,
-            type: type,
+            attachments: finalAttachments.length > 0 ? finalAttachments : null,
             isDeleted: false,
             timestamp: serverTimestamp()
         });
-        dom.msgInput.value = '';
-        dom.fileInput.value = '';
-        dom.previewContainer.classList.add('hidden');
-    } catch (e) { showToast("Gagal mengirim: " + e.message, 'error'); } 
-    finally { dom.sendBtn.disabled = false; dom.sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>'; }
-};
 
-dom.fileInput.onchange = (e) => { if(e.target.files[0]) { dom.previewContainer.classList.remove('hidden'); document.getElementById('previewName').innerText = e.target.files[0].name; } };
-dom.cancelFileBtn.onclick = () => { dom.fileInput.value = ''; dom.previewContainer.classList.add('hidden'); };
+        dom.msgInput.value = '';
+        pendingFiles = [];
+        renderPendingFiles();
+
+    } catch (e) { 
+        showToast("Gagal mengirim: " + e.message, 'error'); 
+    } finally { 
+        dom.sendBtn.disabled = false; 
+        dom.sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>'; 
+    }
+};
 
 // --- GROUP MENU & LEAVE ---
 dom.groupMenuBtn.onclick = () => dom.groupMenuDropdown.classList.toggle('hidden');
